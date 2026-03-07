@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -45,7 +45,7 @@ jobs:
           SUPABASE_KEY: "placeholder"
           MODAL_TOKEN_ID: "placeholder"
           MODAL_TOKEN_SECRET: "placeholder"
-          API_KEY: "dev-key-change-me"
+          DISHSPACE_API_KEY: "dev-key-change-me"
         run: |
           pytest -v --tb=short
 
