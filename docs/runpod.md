@@ -49,6 +49,20 @@ After setup, the important paths are:
 - `CACHE_DIR=/runpod-volume/dishspace/cache`
 - `HF_HOME=/runpod-volume/dishspace/cache/huggingface`
 
+## Hugging Face Access
+
+The default base model `physical-intelligence/pi0-base` is gated.
+
+Before any real training run:
+
+1. Accept the model terms at `https://huggingface.co/physical-intelligence/pi0-base`
+2. Create a read token at `https://huggingface.co/settings/tokens`
+3. Export it on the pod:
+
+```bash
+export HF_TOKEN=hf_...
+```
+
 ## Training
 
 Preflight the environment before training:
@@ -59,11 +73,15 @@ export PYOPENGL_PLATFORM=osmesa
 python scripts/check_deps.py --profile train
 ```
 
+The preflight now checks both package imports and gated-model access for `pi0-base`.
+
 Balanced metadata-only dry run:
 
 ```bash
 bash scripts/runpod_train.sh --dry-run --samples 5000 --no-render --include-failures
 ```
+
+Use `--no-render` only for dry runs. Full training requires rendered RGB inputs.
 
 Rendered dataset and training run:
 

@@ -40,6 +40,34 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import numpy as np
 
 
+def _resolve_hf_token() -> str | None:
+    return (
+        os.environ.get("HF_TOKEN")
+        or os.environ.get("HUGGINGFACE_TOKEN")
+        or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+    )
+
+
+def _preflight_model_access(args: argparse.Namespace) -> None:
+    token = _resolve_hf_token()
+    if not token:
+        print("\n❌ Missing required Hugging Face token:")
+        print("  export HF_TOKEN=hf_...")
+        print("  Accept model terms: https://huggingface.co/physical-intelligence/pi0-base")
+        sys.exit(1)
+
+    try:
+        from huggingface_hub import HfApi
+
+        HfApi(token=token).model_info(args.base_model)
+    except Exception as exc:
+        print("\n❌ Unable to access the base model before training:")
+        print(f"  model:  {args.base_model}")
+        print(f"  error:  {type(exc).__name__}: {exc}")
+        print("  fix:    accept the model terms and use a token with read access")
+        sys.exit(1)
+
+
 def _preflight(args: argparse.Namespace) -> None:
     """Verify critical dependencies are importable before doing any work."""
     errors: list[str] = []
@@ -47,6 +75,7 @@ def _preflight(args: argparse.Namespace) -> None:
     for mod_name, pip_pkg, purpose in [
         ("torch", "torch", "PyTorch"),
         ("transformers", "transformers>=4.47.0", "model loading"),
+        ("huggingface_hub", "huggingface-hub>=0.26.0", "gated model access"),
         ("peft", "peft>=0.14.0", "DoRA/LoRA adapters"),
         ("accelerate", "accelerate>=0.35.0", "distributed / device_map"),
     ]:
@@ -63,12 +92,19 @@ def _preflight(args: argparse.Namespace) -> None:
         print("  # or: python scripts/check_deps.py --install")
         sys.exit(1)
 
+    if not args.dry_run and not args.render:
+        print("\n❌ Training requires rendered RGB inputs.")
+        print("  Remove --no-render for full training runs.")
+        print("  Use --dry-run --no-render only to validate metadata generation.")
+        sys.exit(1)
+
     # CUDA check (warn, don't block)
     if not args.dry_run:
         import torch
         if not torch.cuda.is_available():
             print("\n⚠️  WARNING: No CUDA GPU detected. Training will be extremely slow on CPU.")
             print("   Consider using --dry-run to validate data pipeline only.\n")
+        _preflight_model_access(args)
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -109,11 +145,11 @@ def parse_args() -> argparse.Namespace:
                    help="Gradient accumulation steps (effective batch = batch_size * this)")
     p.add_argument("--eval-pct", type=float, default=0.15,
                    help="Fraction of data held out for evaluation")
-    p.add_argument("--fp16", action="store_true", default=True,
-                   help="Use FP16 mixed precision")
+    p.add_argument("--fp16", action=argparse.BooleanOptionalAction, default=True,
+                   help="Use FP16 mixed precision on CUDA (use --no-fp16 to disable)")
 
     # Output
-    p.add_argument("--output-dir", type=str, default="models/dora/kitchen_v1",
+    p.add_argument("--output-dir", type=str, default=f"{os.environ.get('MODELS_DIR', 'models')}/dora/kitchen_v1",
                    help="Directory to save adapter weights")
     p.add_argument("--profile-name", type=str, default="kitchen_default_v1",
                    help="Name for the kitchen profile")
@@ -224,14 +260,17 @@ def load_model_and_adapter(args: argparse.Namespace):
     print(f"   Device: {device}, Dtype: {dtype}")
     print(f"   Model class: {ModelClass.__name__}")
 
+    token = _resolve_hf_token()
+
     processor = AutoProcessor.from_pretrained(
-        args.base_model, trust_remote_code=True,
+        args.base_model, trust_remote_code=True, token=token,
     )
     model = ModelClass.from_pretrained(
         args.base_model,
         torch_dtype=dtype,
         device_map="auto" if device == "cuda" else None,
         trust_remote_code=True,
+        token=token,
     )
 
     # Apply DoRA/LoRA adapter
@@ -250,6 +289,17 @@ def load_model_and_adapter(args: argparse.Namespace):
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
 
+    if trainable_params == 0:
+        candidate_modules = [
+            name for name, _ in model.named_modules()
+            if any(term in name for term in ("proj", "gate", "up", "down", "attn", "mlp"))
+        ][:20]
+        raise RuntimeError(
+            "No trainable adapter parameters were created. "
+            f"The target modules {args.target_modules} likely do not match {args.base_model}. "
+            f"Example module names: {candidate_modules}"
+        )
+
     adapter_name = "DoRA" if use_dora else "LoRA"
     print(f"   {adapter_name} applied: rank={args.rank}, alpha={args.alpha}")
     print(f"   Target modules: {args.target_modules}")
@@ -262,16 +312,27 @@ def collate_fn(batch: list[dict]) -> dict:
     """Custom collation for grasp training samples."""
     import torch
 
+    if not batch:
+        raise ValueError("Received an empty batch")
+
     result = {}
 
-    # Stack images if present
-    if "pixel_values" in batch[0]:
+    has_pixel_values = ["pixel_values" in sample for sample in batch]
+    if any(has_pixel_values) and not all(has_pixel_values):
+        raise ValueError("Inconsistent batch: some samples have pixel_values and others do not")
+    if all(has_pixel_values):
         result["pixel_values"] = torch.stack([b["pixel_values"] for b in batch])
-    if "input_ids" in batch[0]:
+
+    has_input_ids = ["input_ids" in sample for sample in batch]
+    if any(has_input_ids) and not all(has_input_ids):
+        raise ValueError("Inconsistent batch: some samples have input_ids and others do not")
+    if all(has_input_ids):
         result["input_ids"] = torch.stack([b["input_ids"] for b in batch])
         result["attention_mask"] = torch.stack([b["attention_mask"] for b in batch])
 
     # Actions as tensor
+    if not all("action" in sample for sample in batch):
+        raise ValueError("Inconsistent batch: one or more samples are missing action")
     result["actions"] = torch.tensor([b["action"] for b in batch], dtype=torch.float32)
 
     # Labels for loss computation (use input_ids as labels for causal LM)

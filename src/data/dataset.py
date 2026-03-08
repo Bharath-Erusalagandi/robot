@@ -546,6 +546,13 @@ class GraspDataset:
         with open(self.manifest_path) as f:
             self.samples = json.load(f)
 
+        manifest_dir = self.manifest_path.parent
+        for sample in self.samples:
+            for key in ("image_path", "depth_path"):
+                path_value = sample.get(key)
+                if path_value and not Path(path_value).is_absolute():
+                    sample[key] = str((manifest_dir / path_value).resolve())
+
         if success_only:
             self.samples = [s for s in self.samples if s.get("success", False)]
 
@@ -579,18 +586,41 @@ class GraspDataset:
             result["depth"] = depth
 
         # If we have a processor, tokenise
+        if self.processor and "image" not in result:
+            raise RuntimeError(
+                f"Sample {sample.get('sample_id', idx)} is missing a rendered image. "
+                "Training requires render=True so pixel inputs exist."
+            )
+
         if self.processor and "image" in result:
             from PIL import Image
 
             pil_img = Image.fromarray(result["image"])
-            encoded = self.processor(
-                images=pil_img,
-                text=result["instruction"],
-                return_tensors="pt",
-                max_length=self.max_length,
-                padding="max_length",
-                truncation=True,
-            )
+            try:
+                encoded = self.processor(
+                    images=pil_img,
+                    text=result["instruction"],
+                    return_tensors="pt",
+                    max_length=self.max_length,
+                    padding="max_length",
+                    truncation=True,
+                )
+            except TypeError as exc:
+                if "max_length" not in str(exc):
+                    raise RuntimeError(
+                        f"Processor failed for sample {sample.get('sample_id', idx)}: {exc}"
+                    ) from exc
+                encoded = self.processor(
+                    images=pil_img,
+                    text=result["instruction"],
+                    return_tensors="pt",
+                    padding="max_length",
+                    truncation=True,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Processor failed for sample {sample.get('sample_id', idx)}: {exc}"
+                ) from exc
             result["pixel_values"] = encoded["pixel_values"].squeeze(0)
             if "input_ids" in encoded:
                 result["input_ids"] = encoded["input_ids"].squeeze(0)
