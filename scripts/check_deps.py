@@ -126,10 +126,35 @@ def main():
 
         if args.install:
             print(f"\n{BOLD}Installing missing packages...{RESET}\n")
-            for _, pip_pkg, _ in missing:
+            failed = []
+            for _, pip_pkg, reason in missing:
                 print(f"  Installing {pip_pkg} ...")
-                subprocess.check_call([sys.executable, "-m", "pip", "install", pip_pkg])
-            print(f"\n{GREEN}Done. Re-run this script to confirm.{RESET}")
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "--ignore-installed", pip_pkg],
+                    capture_output=True, text=True
+                )
+                if result.returncode != 0:
+                    print(f"  {YELLOW}  Warning: failed with --ignore-installed, retrying with --break-system-packages...{RESET}")
+                    result2 = subprocess.run(
+                        [sys.executable, "-m", "pip", "install", "--break-system-packages", pip_pkg],
+                        capture_output=True, text=True
+                    )
+                    if result2.returncode != 0:
+                        print(f"  {RED}  Failed to install {pip_pkg}: {result2.stderr.strip()}{RESET}")
+                        failed.append((pip_pkg, reason))
+                    else:
+                        print(f"  {GREEN}  Installed {pip_pkg} (via --break-system-packages){RESET}")
+                else:
+                    print(f"  {GREEN}  Installed {pip_pkg}{RESET}")
+            if failed:
+                print(f"\n{YELLOW}Could not auto-install:{RESET}")
+                for pkg, reason in failed:
+                    print(f"  {pkg}  ({reason})")
+                print(f"\nConsider using a virtual environment:")
+                print(f"  python -m venv /workspace/venv && source /workspace/venv/bin/activate")
+                print(f"  pip install -e '.[dev,gpu]'")
+            else:
+                print(f"\n{GREEN}Done. Re-run this script to confirm.{RESET}")
         else:
             print(f"\nTo install all missing packages at once:")
             pkgs = " ".join(f'"{p}"' for _, p, _ in missing)
