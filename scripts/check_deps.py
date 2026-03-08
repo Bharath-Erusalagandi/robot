@@ -159,11 +159,25 @@ def _run_mujoco_backend_probe(backend: str) -> tuple[bool, str]:
         '''
     ).replace("BACKEND", repr(backend))
 
+    # Ensure common system lib dirs are on LD_LIBRARY_PATH so the
+    # subprocess can find libosmesa / libegl even when the shell hasn't
+    # set the path.
+    extra_lib_dirs = "/usr/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu:/usr/local/lib"
+    ld_path = os.environ.get("LD_LIBRARY_PATH", "")
+    if extra_lib_dirs not in ld_path:
+        ld_path = f"{extra_lib_dirs}:{ld_path}" if ld_path else extra_lib_dirs
+
+    probe_env = {
+        **os.environ,
+        "MUJOCO_GL": backend,
+        "PYOPENGL_PLATFORM": backend,
+        "LD_LIBRARY_PATH": ld_path,
+    }
     result = subprocess.run(
         [sys.executable, "-c", probe],
         capture_output=True,
         text=True,
-        env={**os.environ, "MUJOCO_GL": backend, "PYOPENGL_PLATFORM": backend},
+        env=probe_env,
     )
     if result.returncode == 0:
         version = result.stdout.strip().split(":", 1)[-1] if result.stdout.strip() else "?"
@@ -177,16 +191,19 @@ def _run_mujoco_backend_probe(backend: str) -> tuple[bool, str]:
 def _check_mujoco_runtime() -> tuple[bool, str]:
     import mujoco
 
+    errors: dict[str, str] = {}
     for backend in ("egl", "osmesa"):
         ok, detail = _run_mujoco_backend_probe(backend)
         if ok:
             if backend == "osmesa":
                 return True, f"mujoco {mujoco.__version__} | osmesa render smoke test passed (set MUJOCO_GL=osmesa for CPU rendering)"
             return True, detail
+        errors[backend] = detail
 
+    err_summary = "; ".join(f"{b}: {e}" for b, e in errors.items())
     return (
         False,
-        "MuJoCo is installed but headless rendering failed for egl and osmesa. "
+        f"MuJoCo is installed but headless rendering failed. {err_summary}. "
         "Install system GL libs with: apt-get update && apt-get install -y libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri libgles2 libglfw3 libglfw3-dev libglew2.2 libgbm1 libdrm2 libglvnd0 libglx-mesa0 libosmesa6 libosmesa6-dev libglib2.0-0 libglvnd-dev mesa-utils libxrender1 libxext6 libsm6",
     )
 
