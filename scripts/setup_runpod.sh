@@ -68,7 +68,9 @@ fi
 
 if [[ "$INSTALL_DEPS" == "true" ]]; then
   python -m pip install --upgrade pip
-  python -m pip install -e '.[dev,gpu,demo]'
+  if ! python -m pip install --ignore-installed -e '.[dev,gpu,demo]'; then
+    python -m pip install --break-system-packages --ignore-installed -e '.[dev,gpu,demo]'
+  fi
 fi
 
 cat <<EOF
