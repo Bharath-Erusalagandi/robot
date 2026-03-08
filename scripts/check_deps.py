@@ -71,6 +71,24 @@ def _check_torch_runtime() -> tuple[bool, str]:
     return True, f"torch {version} | CUDA: no (CPU only)"
 
 
+def _check_torchvision_runtime() -> tuple[bool, str]:
+    try:
+        import torch
+        import torchvision
+        from torchvision.ops import nms
+
+        boxes = torch.tensor([[0.0, 0.0, 10.0, 10.0], [1.0, 1.0, 9.0, 9.0]], dtype=torch.float32)
+        scores = torch.tensor([0.9, 0.8], dtype=torch.float32)
+        keep = nms(boxes, scores, 0.5)
+        return True, f"torchvision {torchvision.__version__} | nms ok ({len(keep)} kept)"
+    except Exception as exc:
+        cause = exc.__cause__ or exc.__context__
+        detail = f"{type(exc).__name__}: {exc}"
+        if cause is not None:
+            detail += f" | cause: {type(cause).__name__}: {cause}"
+        return False, f"torchvision runtime import failed: {detail}"
+
+
 def _check_transformers_runtime() -> tuple[bool, str]:
     try:
         from transformers import AutoModel, AutoModelForCausalLM, AutoProcessor, Trainer, TrainingArguments
@@ -175,6 +193,7 @@ def _check_mujoco_runtime() -> tuple[bool, str]:
 
 CHECKS: tuple[Check, ...] = (
     Check("torch", "torch>=2.5.0", "training runtime", frozenset({"core", "train", "gpu"}), runtime_check=_check_torch_runtime),
+    Check("torchvision", "torchvision>=0.20.0", "vision ops required by transformers image stack", frozenset({"core", "train", "gpu"}), runtime_check=_check_torchvision_runtime),
     Check("transformers", "transformers>=4.47.0", "model loading / trainer", frozenset({"core", "train", "gpu"}), runtime_check=_check_transformers_runtime),
     Check("peft", "peft>=0.14.0", "LoRA / DoRA adapters", frozenset({"core", "train", "gpu"}), runtime_check=_check_peft_runtime),
     Check("accelerate", "accelerate>=0.35.0", "device_map / distributed helpers", frozenset({"core", "train", "gpu"})),

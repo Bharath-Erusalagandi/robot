@@ -31,6 +31,62 @@ export HF_HOME="${HF_HOME:-$CACHE_DIR/huggingface}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME/transformers}"
 export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}"
 
+install_matching_torchvision() {
+  local tv_spec
+  local index_url
+
+  tv_spec="$(python - <<'PY'
+import importlib
+
+try:
+    torch = importlib.import_module("torch")
+except Exception:
+    print("")
+    raise SystemExit(0)
+
+version = getattr(torch, "__version__", "")
+base = version.split("+", 1)[0]
+parts = base.split(".")
+if len(parts) < 2:
+    print("")
+    raise SystemExit(0)
+
+major_minor = ".".join(parts[:2])
+mapping = {
+    "2.5": "0.20.0",
+    "2.6": "0.21.0",
+    "2.7": "0.22.0",
+    "2.8": "0.23.0",
+}
+print(mapping.get(major_minor, ""))
+PY
+)"
+
+  index_url="$(python - <<'PY'
+import importlib
+
+try:
+    torch = importlib.import_module("torch")
+except Exception:
+    print("")
+    raise SystemExit(0)
+
+version = getattr(torch, "__version__", "")
+cuda = getattr(torch.version, "cuda", None)
+if not cuda:
+    print("https://download.pytorch.org/whl/cpu")
+    raise SystemExit(0)
+
+tag = "cu" + cuda.replace(".", "")
+print(f"https://download.pytorch.org/whl/{tag}")
+PY
+)"
+
+  if [[ -n "$tv_spec" && -n "$index_url" ]]; then
+    python -m pip install --ignore-installed --index-url "$index_url" "torchvision==$tv_spec"
+  fi
+}
+
 mkdir -p "$DATA_DIR" "$MODELS_DIR" "$CACHE_DIR" "$HF_HOME" "$TRANSFORMERS_CACHE" "$HUGGINGFACE_HUB_CACHE" "$VOLUME_ROOT/logs"
 
 if [[ ! -f "$ROOT_DIR/.env" && -f "$ROOT_DIR/.env.example" ]]; then
@@ -71,6 +127,7 @@ if [[ "$INSTALL_DEPS" == "true" ]]; then
   if ! python -m pip install --ignore-installed -e '.[dev,gpu,demo]'; then
     python -m pip install --break-system-packages --ignore-installed -e '.[dev,gpu,demo]'
   fi
+  install_matching_torchvision
 fi
 
 cat <<EOF
