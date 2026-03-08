@@ -40,6 +40,36 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import numpy as np
 
 
+def _preflight(args: argparse.Namespace) -> None:
+    """Verify critical dependencies are importable before doing any work."""
+    errors: list[str] = []
+
+    for mod_name, pip_pkg, purpose in [
+        ("torch", "torch", "PyTorch"),
+        ("transformers", "transformers>=4.47.0", "model loading"),
+        ("peft", "peft>=0.14.0", "DoRA/LoRA adapters"),
+        ("accelerate", "accelerate>=0.35.0", "distributed / device_map"),
+    ]:
+        try:
+            __import__(mod_name)
+        except ImportError:
+            errors.append(f"  pip install \"{pip_pkg}\"   # {purpose}")
+
+    if errors:
+        print("\n❌ Missing required packages:")
+        print("\n".join(errors))
+        print("\nInstall them with:")
+        print("  pip install -e '.[dev,gpu]'")
+        print("  # or: python scripts/check_deps.py --install")
+        sys.exit(1)
+
+    # CUDA check (warn, don't block)
+    if not args.dry_run:
+        import torch
+        if not torch.cuda.is_available():
+            print("\n⚠️  WARNING: No CUDA GPU detected. Training will be extremely slow on CPU.")
+            print("   Consider using --dry-run to validate data pipeline only.\n")
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Fine-tune π₀ with DoRA for kitchen dishwashing grasps"
@@ -163,23 +193,45 @@ def prepare_dataset(args: argparse.Namespace, annotations_path: Path) -> tuple:
     return train_ds, eval_ds
 
 
+def _auto_model_class():
+    """Return the best available Auto class for vision-language models."""
+    from transformers import AutoModel
+    try:
+        from transformers import AutoModelForVision2Seq
+        return AutoModelForVision2Seq
+    except ImportError:
+        pass
+    try:
+        from transformers import AutoModelForCausalLM
+        return AutoModelForCausalLM
+    except ImportError:
+        pass
+    return AutoModel
+
+
 def load_model_and_adapter(args: argparse.Namespace):
     """Load base model and apply DoRA/LoRA adapter."""
     import torch
-    from transformers import AutoModelForVision2Seq, AutoProcessor
+    from transformers import AutoProcessor
     from peft import LoraConfig, get_peft_model, TaskType
+
+    ModelClass = _auto_model_class()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.float16 if (args.fp16 and device == "cuda") else torch.float32
 
     print(f"\n🧠 Loading base model: {args.base_model}")
     print(f"   Device: {device}, Dtype: {dtype}")
+    print(f"   Model class: {ModelClass.__name__}")
 
-    processor = AutoProcessor.from_pretrained(args.base_model)
-    model = AutoModelForVision2Seq.from_pretrained(
+    processor = AutoProcessor.from_pretrained(
+        args.base_model, trust_remote_code=True,
+    )
+    model = ModelClass.from_pretrained(
         args.base_model,
         torch_dtype=dtype,
         device_map="auto" if device == "cuda" else None,
+        trust_remote_code=True,
     )
 
     # Apply DoRA/LoRA adapter
@@ -357,6 +409,9 @@ def main():
     print("  DishSpace — π₀ Fine-Tuning with DoRA")
     print("  Kitchen Dishwashing Grasp Planning")
     print("=" * 60)
+
+    # ── Pre-flight checks ──
+    _preflight(args)
 
     # Step 1: Generate or load annotations
     annotations_path = generate_or_load_annotations(args)

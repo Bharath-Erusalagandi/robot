@@ -213,8 +213,11 @@ def render_synthetic_image(
 
     try:
         return _render_mujoco(annotation, resolution, rng)
-    except Exception:
-        log.debug("mujoco_render_fallback", reason="MuJoCo not available, using procedural")
+    except ImportError:
+        log.debug("mujoco_render_fallback", reason="MuJoCo not installed, using procedural")
+        return _render_procedural(annotation, resolution, rng)
+    except Exception as exc:
+        log.warning("mujoco_render_error", error=str(exc), fallback="procedural")
         return _render_procedural(annotation, resolution, rng)
 
 

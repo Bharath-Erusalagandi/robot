@@ -217,19 +217,38 @@ class DishBenchEvaluator:
         self.rng = np.random.default_rng(seed)
         self._loaded = False
 
+    @staticmethod
+    def _auto_model_class():
+        from transformers import AutoModel
+        try:
+            from transformers import AutoModelForVision2Seq
+            return AutoModelForVision2Seq
+        except ImportError:
+            pass
+        try:
+            from transformers import AutoModelForCausalLM
+            return AutoModelForCausalLM
+        except ImportError:
+            pass
+        return AutoModel
+
     def load_model(self, base_model: str = "physical-intelligence/pi0-base") -> None:
         """Load base model and optionally apply adapter."""
         try:
             import torch
-            from transformers import AutoModelForVision2Seq, AutoProcessor
+            from transformers import AutoProcessor
 
+            ModelClass = self._auto_model_class()
             dtype = torch.float16 if self.device == "cuda" else torch.float32
 
-            self.processor = AutoProcessor.from_pretrained(base_model)
-            self.model = AutoModelForVision2Seq.from_pretrained(
+            self.processor = AutoProcessor.from_pretrained(
+                base_model, trust_remote_code=True,
+            )
+            self.model = ModelClass.from_pretrained(
                 base_model,
                 torch_dtype=dtype,
                 device_map="auto" if self.device == "cuda" else None,
+                trust_remote_code=True,
             )
 
             if self.adapter_path and Path(self.adapter_path).exists():
