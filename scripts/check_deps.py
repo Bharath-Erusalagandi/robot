@@ -139,7 +139,7 @@ def _run_mujoco_backend_probe(backend: str) -> tuple[bool, str]:
         os.environ["PYOPENGL_PLATFORM"] = BACKEND
         import mujoco
 
-        xml = "<mujoco model=\"smoke\"><worldbody><light pos=\"0 0 2\"/><camera name=\"cam\" pos=\"0 -1 0.5\" xyaxes=\"1 0 0 0 0 1\"/><geom type=\"plane\" size=\"1 1 0.1\" rgba=\"0.8 0.8 0.8 1\"/><body pos=\"0 0 0.05\"><geom type=\"box\" size=\"0.05 0.05 0.05\" rgba=\"0.2 0.4 0.8 1\"/></body></worldbody></mujoco>"
+        xml = '<mujoco model="smoke"><worldbody><light pos="0 0 2"/><camera name="cam" pos="0 -1 0.5" xyaxes="1 0 0 0 0 1"/><geom type="plane" size="1 1 0.1" rgba="0.8 0.8 0.8 1"/><body pos="0 0 0.05"><geom type="box" size="0.05 0.05 0.05" rgba="0.2 0.4 0.8 1"/></body></worldbody></mujoco>'
 
         model = mujoco.MjModel.from_xml_string(xml)
         data = mujoco.MjData(model)
