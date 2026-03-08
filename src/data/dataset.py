@@ -16,10 +16,16 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+# Force EGL (off-screen GPU) rendering for MuJoCo on headless servers.
+# Must be set before mujoco is imported anywhere in the process.
+os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 
 import numpy as np
 
@@ -236,23 +242,24 @@ def _render_mujoco(
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
 
-    # Render RGB
     renderer = mujoco.Renderer(model, height=h, width=w)
-    renderer.update_scene(data, camera="overhead_cam")
-    rgb = renderer.render()
+    try:
+        # Render RGB
+        renderer.update_scene(data, camera="overhead_cam")
+        rgb = renderer.render()
 
-    # Render depth
-    renderer.enable_depth_rendering()
-    depth_raw = renderer.render()
-    renderer.disable_depth_rendering()
+        # Render depth
+        renderer.enable_depth_rendering()
+        depth_raw = renderer.render()
+        renderer.disable_depth_rendering()
+    finally:
+        renderer.close()
 
     # Convert depth from meters to uint16 mm
     depth_mm = (depth_raw * 1000).astype(np.uint16)
 
     # Simulate sensor artefacts for realism
     depth_mm = _add_depth_noise(depth_mm, annotation, rng)
-
-    renderer.close()
 
     return rgb.copy(), depth_mm
 
