@@ -1,54 +1,135 @@
-## Abluo
+# Abluo
 
-Abluo is a kitchen-manipulation training and evaluation stack for robot arms that need to deal with real sink scenes: clutter, wet surfaces, transparent glass, reflective metal, stacked dishes, and dishwasher loading.
+Abluo is a kitchen robotics toolkit for grasp planning in sink-like scenes with clutter, wet surfaces, transparent glass, and reflective metal.
 
-## Goal
+It includes:
+- synthetic data generation
+- local and Modal-oriented fine-tuning workflows
+- DishBench-style evaluation
+- a FastAPI serving layer with API-key auth
+- a Streamlit demo for quick visual validation
 
-The end goal is not a single demo grasp endpoint. The end goal is a robot policy that can:
+## What Is In This Repository
 
-1. Perceive almost all common sink items.
-2. Select stable grasps in cluttered, wet scenes.
-3. Decide what to pick first and where it should go.
-4. Transfer objects to the drying rack or dishwasher.
-5. Recover when grasping or placement fails.
+- API server: `src/api/server.py`
+- CLI entry point: `src/cli.py`
+- data pipeline: `src/data/`
+- model + inference: `src/inference/`
+- evaluation: `src/evaluation/`
+- training/eval scripts: `scripts/`
+- demo UI: `demo/app.py`
 
-## Current Scope
+## Quick Start (Local)
 
-The current codebase is in the grasp-core phase:
+### 1) Create environment and install
 
-1. Synthetic kitchen grasp data generation.
-2. Vision-language-action dataset preparation.
-3. Adapter fine-tuning scaffolding.
-4. Grasp evaluation and API plumbing.
+```bash
+python3 -m venv robot-env
+source robot-env/bin/activate
+pip install --upgrade pip
+pip install -e .
+pip install -e ".[dev,demo,gpu]"
+```
 
-That is the right first phase, but it is not yet the full sink-to-dishwasher system.
+### 2) Configure environment
 
-## Development Phases
+```bash
+cp .env.example .env
+```
 
-### Phase 1: Grasp Foundation
+Minimum recommended values for local development:
+- `DISHSPACE_API_KEY=dev-key-change-me`
+- `DEVICE=cpu` (or `cuda`)
+- `DEPTH_COMPLETION=none`
+- `SEGMENTATION=none`
 
-- Generate balanced synthetic data across kitchen object families.
-- Train a grasp model that works in wet, cluttered sink scenes.
-- Benchmark on sink-scene categories, not only isolated objects.
+For real training on pi0-base, set `HF_TOKEN` and ensure your token has access:
+- https://huggingface.co/physical-intelligence/pi0-base
+- https://huggingface.co/settings/tokens
 
-### Phase 2: Placement and Loading
+### 3) Run dependency preflight
 
-- Add placement targets such as drying rack, utensil caddy, dishwasher top rack, and dishwasher bottom rack.
-- Train policies for safe transfer and placement, not only pickup.
+```bash
+python scripts/check_deps.py --profile all
+```
 
-### Phase 3: Sequencing
+### 4) Start the API
 
-- Learn task order: clear large blockers, separate utensils, protect fragile items, then load dishwasher.
-- Add retry and recovery after failed grasps or collisions.
+```bash
+dishspace serve --host 0.0.0.0 --port 8000 --reload
+```
 
-### Phase 4: Real-World Adaptation
+Health check:
+```bash
+curl http://localhost:8000/health
+```
 
-- Fine-tune on pilot kitchen rollouts.
-- Close the sim-to-real gap with real failures, retries, and placement logs.
+## Common Workflows
 
-## What Good Looks Like
+### Generate synthetic annotations
+```bash
+dishspace generate --count 5000 --seed 42 --output data/synthetic_annotations.json
+```
 
-- Thousands to tens of thousands of synthetic grasp attempts.
-- Real cluttered sink scenes, not only isolated object crops.
-- Both successful and failed attempts retained for evaluation and recovery modeling.
-- Benchmark categories that stress clutter, occlusion, wetness, utensil entanglement, and placement.
+### Train adapter locally
+```bash
+dishspace train --quick --output-dir models/dora/kitchen_v1
+```
+
+### Evaluate model performance
+```bash
+dishspace evaluate --local --compare-baseline --adapter models/dora/kitchen_v1/adapter --output data/eval/compare.json
+```
+
+### Run grasp planning from an image
+```bash
+dishspace plan data/example_rgb.png --profile default --robot UR5_realsense --output data/grasp_result.json
+```
+
+### Run demo UI
+```bash
+streamlit run demo/app.py
+```
+The demo expects the API at http://localhost:8000.
+
+## CLI Commands
+
+The installed CLI command is `dishspace`.
+
+Run help:
+```bash
+dishspace --help
+dishspace train --help
+```
+
+## API Overview
+
+Primary endpoints in `src/api/server.py`:
+- `POST /grasp_plan`
+- `POST /grasp_plan/batch`
+- `POST /grasp_plan/ros_trajectory`
+- `POST /fine_tune`
+- `GET /fine_tune/{job_id}/status`
+- `GET /profiles`
+- `GET /profiles/{profile_name}`
+- `POST /evaluate`
+- `GET /usage`
+- `GET /health`
+
+Interactive docs:
+- http://localhost:8000/docs
+- http://localhost:8000/redoc
+
+## Docker
+
+Build and run API:
+```bash
+docker compose up --build
+```
+
+## Runpod
+
+For GPU pods and persistent volume workflows, see `docs/runpod.md`.
+
+## Notes
+- Keep secrets in `.env` and never commit credentials.

@@ -188,6 +188,39 @@ def _run_mujoco_backend_probe(backend: str) -> tuple[bool, str]:
     return False, detail
 
 
+def _check_hf_token() -> tuple[bool, str]:
+    token = (
+        os.environ.get("HF_TOKEN")
+        or os.environ.get("HUGGINGFACE_TOKEN")
+        or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+    )
+    if not token:
+        return False, (
+            "HF_TOKEN is not set. pi0-base is a gated model and requires authentication. "
+            "Set it before running: export HF_TOKEN=hf_... "
+            "Get a token at https://huggingface.co/settings/tokens then accept the model "
+            "terms at https://huggingface.co/physical-intelligence/pi0-base"
+        )
+
+    model_id = "physical-intelligence/pi0-base"
+    try:
+        from huggingface_hub import HfApi
+
+        api = HfApi(token=token)
+        api.model_info(model_id)
+        return True, f"HF token valid | access to {model_id} confirmed"
+    except Exception as exc:
+        err = str(exc)
+        if any(k in err for k in ("401", "403", "Unauthorized", "credentials", "RepositoryNotFound")):
+            return False, (
+                f"HF_TOKEN is set but cannot access {model_id}. "
+                "Accept the model terms at https://huggingface.co/physical-intelligence/pi0-base "
+                "then make sure your token has read access."
+            )
+        # Network / timeout issues are non-fatal
+        return True, f"HF token is set (model access check skipped: {type(exc).__name__}: {exc})"
+
+
 def _check_mujoco_runtime() -> tuple[bool, str]:
     import mujoco
 
@@ -209,6 +242,7 @@ def _check_mujoco_runtime() -> tuple[bool, str]:
 
 
 CHECKS: tuple[Check, ...] = (
+    Check("huggingface_hub", "huggingface-hub>=0.26.0", "HuggingFace token + gated model access", frozenset({"train", "gpu"}), runtime_check=_check_hf_token),
     Check("torch", "torch>=2.5.0", "training runtime", frozenset({"core", "train", "gpu"}), runtime_check=_check_torch_runtime),
     Check("torchvision", "torchvision>=0.20.0", "vision ops required by transformers image stack", frozenset({"core", "train", "gpu"}), runtime_check=_check_torchvision_runtime),
     Check("transformers", "transformers>=4.47.0", "model loading / trainer", frozenset({"core", "train", "gpu"}), runtime_check=_check_transformers_runtime),

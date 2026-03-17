@@ -18,6 +18,15 @@ export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}"
 
 mkdir -p "$DATA_DIR/training/runpod" "$MODELS_DIR/dora" "$CACHE_DIR" "$HF_HOME" "$TRANSFORMERS_CACHE" "$HUGGINGFACE_HUB_CACHE"
 
+# Fail fast if HF_TOKEN is missing — pi0-base is a gated model
+if [[ -z "${HF_TOKEN:-}" ]]; then
+  echo "ERROR: HF_TOKEN is not set. The pi0-base model is gated and requires authentication."
+  echo "  1. Get a token:  https://huggingface.co/settings/tokens"
+  echo "  2. Accept terms: https://huggingface.co/physical-intelligence/pi0-base"
+  echo "  3. Run:          export HF_TOKEN=hf_..."
+  exit 1
+fi
+
 python "$ROOT_DIR/scripts/check_deps.py" --profile train
 
 exec python "$ROOT_DIR/scripts/train.py" \
